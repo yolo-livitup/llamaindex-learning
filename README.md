@@ -9,7 +9,7 @@
 
 ## 进度
 - [x] Day 1: 环境搭建 + 跑通项目
-- [ ] Day 2: 核心三件套（ingest / retriever / chat）
+- [x] Day 2: 核心三件套（ingest / retriever / chat）
 - [ ] Day 3: 边角细节
 - [ ] Day 4: UI 层
 - [ ] Day 5: 动手改功能
@@ -18,7 +18,8 @@
 
 ## 练习代码
 - ✅ **lesson1**: 最小 RAG（DeepSeek + 本地 bge-small-zh-v1.5）
-- [ ] lesson2: 手动切分 + 元数据注入 + 持久化
+- ✅ **lesson2**: 手动切分 + 元数据注入 + 持久化
+- ✅ **lesson3**: 混合检索（向量 + BM25 + 融合）
 
 ## 参考项目
 基于 https://github.com/SocFeng/KnowledgeReview 学习
