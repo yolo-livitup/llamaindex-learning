@@ -17,7 +17,8 @@
 - [ ] Day 7: 复习
 
 ## 练习代码
-- lesson1: 最小 RAG
+- ✅ **lesson1**: 最小 RAG（DeepSeek + 本地 bge-small-zh-v1.5）
+- [ ] lesson2: 手动切分 + 元数据注入 + 持久化
 
 ## 参考项目
 基于 https://github.com/SocFeng/KnowledgeReview 学习
