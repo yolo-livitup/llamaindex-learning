@@ -25,6 +25,6 @@ fusion_retriever = QueryFusionRetriever(
 )
 
 
-from llama_index.core.query_engine import RetrieverQueryEngine
-query_engine = RetrieverQueryEngine.from_args(retriever=fusion_retriever)
-print(query_engine.query("我想去比较休闲的地方，给我几个推荐"))
+# from llama_index.core.query_engine import RetrieverQueryEngine
+# query_engine = RetrieverQueryEngine.from_args(retriever=fusion_retriever)
+# print(query_engine.query("我想去比较休闲的地方，给我几个推荐"))
