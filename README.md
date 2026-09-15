@@ -20,6 +20,8 @@
 - ✅ **lesson1**: 最小 RAG（DeepSeek + 本地 bge-small-zh-v1.5）
 - ✅ **lesson2**: 手动切分 + 元数据注入 + 持久化
 - ✅ **lesson3**: 混合检索（向量 + BM25 + 融合）
+- ✅ **lesson4**: 对话引擎（多轮 + 流式 + 引用）
+- 🚧 **lesson5**: 整合成 CLI 应用（进行中）
 
 ## 参考项目
 基于 https://github.com/SocFeng/KnowledgeReview 学习
