@@ -105,6 +105,45 @@ class RagApp:
                 print(token, end="", flush=True)
             print()
 
+    def cmd_list(self):
+        """列出所有文档（按 file_hash 分组）"""
+        groups ={}
+        nodes = self.index.docstore.docs.values()
+        for n in nodes:
+            h = n.metadata["file_hash"]
+            groups.setdefault(h, []).append(n)
+
+        print(f"共 {len(groups)} 个文档，{sum(len(v) for v in groups.values())} 个节点")
+        for h,nodes in groups.items():
+            source = nodes[0].metadata.get("source","?")
+            print(f"  [{h[:10]}]  {source}  ({len(nodes)} 个节点)")
+
+    def cmd_delete(self, file_hash: str):
+        """删除指定 hash 的所有节点"""
+        to_delete =[]
+        matched_hash = None
+        nodes = self.index.docstore.docs.values()
+        for n in nodes:
+            full_h = n.metadata["file_hash"]
+            if full_h== file_hash or full_h.startswith(file_hash):
+                to_delete.append(n.node_id)
+                matched_hash = full_h
+        #未找到
+        if not to_delete:
+            print(f"❌ 没找到 hash={file_hash} 的文档")
+            return
+
+        #找到并删除
+        self.index.delete_nodes(node_ids=to_delete)
+
+
+        # ④ 持久化
+        self.index.storage_context.persist(persist_dir="./storage_lesson2")
+        print(f"✅ 已删除 {len(to_delete)} 个节点  (hash={matched_hash[:10]}...)")
+
+
+
+
 import argparse
 
 def main():
@@ -122,6 +161,13 @@ def main():
     # 子命令 3: chat
     sub.add_parser("chat", help="多轮对话模式")
 
+    # 子命令 4: list
+    sub.add_parser("list", help="列出已入库文档")
+
+    # 子命令 5: delete
+    p_delete = sub.add_parser("delete", help="删除某个文档的所有节点")
+    p_delete.add_argument("file_hash", help="要删除的文档 hash")
+
     args = parser.parse_args()
 
     if args.cmd == "ingest":
@@ -132,6 +178,12 @@ def main():
     elif args.cmd == "chat":
         app = RagApp()
         app.cmd_chat()
+    elif args.cmd == "list":
+        app = RagApp()
+        app.cmd_list()
+    elif args.cmd == "delete":
+        app = RagApp()
+        app.cmd_delete(args.file_hash)
 
 
 if __name__ == "__main__":
