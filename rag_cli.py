@@ -10,7 +10,9 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.core.storage.docstore import SimpleDocumentStore
 import config
-
+import contextvars
+from llama_index.core.retrievers import BaseRetriever
+from llama_index.core.schema import NodeWithScore, QueryBundle
 from sessions_store import SessionStore
 
 
@@ -66,6 +68,45 @@ def cmd_ingest(file:str):
     index.storage_context.persist(persist_dir=str(storage_dir))
     print(f"✅ 入库完成，累计 {len(index.docstore.docs)} 个节点")
 
+# ========== 按文件过滤的检索器 ==========
+_doc_filter_var: contextvars.ContextVar = contextvars.ContextVar(
+    "doc_filter", default=None
+)
+
+
+def set_doc_filter(file_names):
+    """设置本次请求只在哪些文件里检索"""
+    return _doc_filter_var.set(set(file_names) if file_names else None)
+
+
+def reset_doc_filter(token):
+    """用完还原"""
+    _doc_filter_var.reset(token)
+
+
+class FilteredRetriever(BaseRetriever):
+    """包一层：在内层检索后，按当前请求的 doc_filter 过滤结果"""
+
+    def __init__(self, base_retriever):
+        super().__init__()
+        self._base = base_retriever
+
+    def _retrieve(self, query_bundle: QueryBundle):
+        nodes = self._base.retrieve(query_bundle)
+        allowed = _doc_filter_var.get()
+        if allowed:
+            nodes = [
+                n for n in nodes
+                if n.node.metadata.get("source") in allowed
+            ]
+        return nodes
+
+
+
+
+
+
+
 
 class RagApp:
     def __init__(self):
@@ -78,68 +119,79 @@ class RagApp:
         nodes = list(docstore.docs.values())
         if nodes:
             bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=5)
-            self.fusion_retriever = QueryFusionRetriever(
+            fusion = QueryFusionRetriever(
                 retrievers=[vector_retriever, bm25_retriever],
                 similarity_top_k=5,
                 num_queries=1,
                 mode="reciprocal_rerank",
-                use_async=False
+                use_async=False,
             )
+            # 包一层过滤
+            self.fusion_retriever = FilteredRetriever(fusion)
         else:
-            print("索引为空，仅使用向量检索")
-            self.fusion_retriever = vector_retriever
+            print("⚠️ 索引为空，仅使用向量检索")
+            self.fusion_retriever = FilteredRetriever(vector_retriever)
 
         self.query_engine = RetrieverQueryEngine.from_args(retriever=self.fusion_retriever)
 
-    def cmd_ask(self,question):
+    def cmd_ask(self, question: str, files: list = None):
+        token = set_doc_filter(files)  # 设置过滤
+        try:
+            answer = self.query_engine.query(question)
+            print("AI:", answer)
+            print("\n📎 引用：")
+            for i, node in enumerate(answer.source_nodes, 1):
+                fname = node.metadata.get("source", "未知")
+                print(f"  [{i}] {fname}")
+                print(f"      {node.text[:80]}...")
+        finally:
+            reset_doc_filter(token)  # 还原
 
-        answer = self.query_engine.query(question)
-        print(answer)
-        print("\n📎 引用：")
-        for i, node in enumerate(answer.source_nodes, 1):
-            fname = node.metadata.get("source", "未知")
-            print(f"  [{i}] {fname}")
-            print(f"      {node.text[:80]}...")
-
-
-
-
-    def cmd_chat(self,session_id = None):
+    def cmd_chat(self, session_id=None, files: list = None):
         if not session_id:
             session_id = self.session_store.new_id()
+            print(f"🆕 新会话：{session_id}")
+        else:
+            print(f"📂 继续会话：{session_id}")
+
         history = self.session_store.load(session_id) or []
-        #将history 转化成 chat_message
-        messages = []
-        if history:
-            for h in history:
-                if h["role"] == "user":
-                    messages.append(ChatMessage(role="user",content=h["content"]))
-                else:
-                    messages.append(ChatMessage(role="assistant", content=h["content"]))
+        messages = [
+            ChatMessage(role=h["role"], content=h["content"])
+            for h in history
+        ]
 
         my_chat_engine = CondenseQuestionChatEngine.from_defaults(
             llm=Settings.llm,
             query_engine=self.query_engine,
             verbose=True,
-            chat_history = messages
+            chat_history=messages,
         )
+
+        print(f"📁 检索范围：{files or '全部'}")
+        print("输入 quit 退出\n")
+
         while True:
             user_input = input("你：")
             if user_input in ("quit", "exit"):
                 break
 
-            r = my_chat_engine.stream_chat(user_input)
-            print("AI: ", end="", flush=True)
-            collected = []
-            for token in r.response_gen:
-                print(token, end="", flush=True)
-                collected.append(token)
-            print()
+            token = set_doc_filter(files)
+            try:
+                r = my_chat_engine.stream_chat(user_input)
+                print("AI: ", end="", flush=True)
+                collected = []
+                for tok in r.response_gen:
+                    print(tok, end="", flush=True)
+                    collected.append(tok)
+                print()
+            finally:
+                reset_doc_filter(token)
 
-            # ⭐ 追加到 history 并存盘
             history.append({"role": "user", "content": user_input})
             history.append({"role": "assistant", "content": "".join(collected)})
             self.session_store.save(session_id, history)
+
+        print(f"✅ 会话已保存：{session_id}")
     def cmd_list(self):
         """列出所有文档（按 file_hash 分组）"""
         groups ={}
@@ -191,35 +243,39 @@ def main():
     parser = argparse.ArgumentParser(description="LlamaIndex RAG CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # 子命令 1: ingest
-    p_ingest = sub.add_parser("ingest", help="上传文件并入库")
-    p_ingest.add_argument("file", help="要入库的文件路径")
+    p_ingest = sub.add_parser("ingest")
+    p_ingest.add_argument("file")
 
-    # 子命令 2: ask
-    p_ask = sub.add_parser("ask", help="单轮提问")
-    p_ask.add_argument("question", help="要问的问题")
+    p_ask = sub.add_parser("ask")
+    p_ask.add_argument("question")
+    p_ask.add_argument("--files", default=None,
+                       help="只在指定文件中检索，逗号分隔")
 
-    # 子命令 3: chat
-    p_chat = sub.add_parser("chat", help="多轮对话模式")
-    p_chat.add_argument("session_id", nargs="?", default=None, help="会话ID（可选）")
+    p_chat = sub.add_parser("chat")
+    p_chat.add_argument("session_id", nargs="?", default=None)
+    p_chat.add_argument("--files", default=None,
+                        help="只在指定文件中检索，逗号分隔")
 
-    # 子命令 4: list
-    sub.add_parser("list", help="列出已入库文档")
+    sub.add_parser("list")
 
-    # 子命令 5: delete
-    p_delete = sub.add_parser("delete", help="删除某个文档的所有节点")
-    p_delete.add_argument("file_hash", help="要删除的文档 hash")
+    p_delete = sub.add_parser("delete")
+    p_delete.add_argument("file_hash")
 
     args = parser.parse_args()
+
+    # 解析 --files（逗号分隔 → 列表）
+    files = None
+    if hasattr(args, "files") and args.files:
+        files = [f.strip() for f in args.files.split(",")]
 
     if args.cmd == "ingest":
         cmd_ingest(args.file)
     elif args.cmd == "ask":
         app = RagApp()
-        app.cmd_ask(args.question)
+        app.cmd_ask(args.question, files=files)
     elif args.cmd == "chat":
         app = RagApp()
-        app.cmd_chat(args.session_id)
+        app.cmd_chat(args.session_id, files=files)
     elif args.cmd == "list":
         app = RagApp()
         app.cmd_list()

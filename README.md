@@ -22,6 +22,7 @@
 - ✅ **lesson3**: 混合检索（向量 + BM25 + 融合）
 - ✅ **lesson4**: 对话引擎（多轮 + 流式 + 引用）
 - ✅ **lesson5**: CLI 应用（ingest / ask / chat / list / delete / 会话持久化）
-- ✅ **lesson6**: Streamlit Web UI（上传 + 对话 + 引用）
+- ✅ **lesson7**: FastAPI 服务
+- ✅ **lesson8**: 按文件过滤检索（contextvars + FilteredRetriever）
 ## 参考项目
 基于 https://github.com/SocFeng/KnowledgeReview 学习
