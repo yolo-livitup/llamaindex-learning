@@ -10,7 +10,7 @@
 ## 进度
 - [x] Day 1: 环境搭建 + 跑通项目
 - [x] Day 2: 核心三件套（ingest / retriever / chat）
-- [ ] Day 3: 边角细节
+- [x] Day 3: 边角细节
 - [ ] Day 4: UI 层
 - [ ] Day 5: 动手改功能
 - [ ] Day 6: 总结
@@ -21,7 +21,7 @@
 - ✅ **lesson2**: 手动切分 + 元数据注入 + 持久化
 - ✅ **lesson3**: 混合检索（向量 + BM25 + 融合）
 - ✅ **lesson4**: 对话引擎（多轮 + 流式 + 引用）
-- ✅ **lesson5**: CLI 应用（ingest / ask / chat / list / delete），支持累积入库 + hash 管理
+- ✅ **lesson5**: CLI 应用（ingest / ask / chat / list / delete / 会话持久化）
 
 ## 参考项目
 基于 https://github.com/SocFeng/KnowledgeReview 学习

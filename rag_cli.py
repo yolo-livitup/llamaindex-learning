@@ -2,6 +2,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreIndex , Settings
+from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.chat_engine import CondenseQuestionChatEngine
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.query_engine import RetrieverQueryEngine
@@ -9,6 +10,8 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.core.storage.docstore import SimpleDocumentStore
 import config
+
+from sessions_store import SessionStore
 
 
 def load_index():
@@ -39,6 +42,16 @@ def cmd_ingest(file:str):
 
     if (storage_dir / "docstore.json").exists():
         index = load_index()
+
+        # ⭐ 新增：检查 hash 是否已存在
+        existing_hashes = {
+            n.metadata.get("file_hash")
+            for n in index.docstore.docs.values()
+        }
+        if file_hash in existing_hashes:
+            print(f"⏭️ 文件已存在（hash={file_hash[:10]}），跳过")
+            return
+
         # 追加新节点
         for n in nodes:
             index.insert(n)
@@ -58,20 +71,23 @@ class RagApp:
     def __init__(self):
         #索引
         self.index = load_index()
-
+        self.session_store = SessionStore()
         #混合检索
         vector_retriever = self.index.as_retriever(similarity_top_k=5)
         docstore = SimpleDocumentStore.from_persist_dir(persist_dir="./storage_lesson2")
         nodes = list(docstore.docs.values())
-        b25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=5)
-
-        self.fusion_retriever = QueryFusionRetriever(
-            retrievers=[vector_retriever, b25_retriever],
-            similarity_top_k=5,
-            num_queries=1,
-            mode="reciprocal_rerank",
-            use_async=False
-        )
+        if nodes:
+            bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=5)
+            self.fusion_retriever = QueryFusionRetriever(
+                retrievers=[vector_retriever, bm25_retriever],
+                similarity_top_k=5,
+                num_queries=1,
+                mode="reciprocal_rerank",
+                use_async=False
+            )
+        else:
+            print("索引为空，仅使用向量检索")
+            self.fusion_retriever = vector_retriever
 
         self.query_engine = RetrieverQueryEngine.from_args(retriever=self.fusion_retriever)
 
@@ -88,11 +104,24 @@ class RagApp:
 
 
 
-    def cmd_chat(self):
+    def cmd_chat(self,session_id = None):
+        if not session_id:
+            session_id = self.session_store.new_id()
+        history = self.session_store.load(session_id) or []
+        #将history 转化成 chat_message
+        messages = []
+        if history:
+            for h in history:
+                if h["role"] == "user":
+                    messages.append(ChatMessage(role="user",content=h["content"]))
+                else:
+                    messages.append(ChatMessage(role="assistant", content=h["content"]))
+
         my_chat_engine = CondenseQuestionChatEngine.from_defaults(
             llm=Settings.llm,
             query_engine=self.query_engine,
             verbose=True,
+            chat_history = messages
         )
         while True:
             user_input = input("你：")
@@ -101,10 +130,16 @@ class RagApp:
 
             r = my_chat_engine.stream_chat(user_input)
             print("AI: ", end="", flush=True)
+            collected = []
             for token in r.response_gen:
                 print(token, end="", flush=True)
+                collected.append(token)
             print()
 
+            # ⭐ 追加到 history 并存盘
+            history.append({"role": "user", "content": user_input})
+            history.append({"role": "assistant", "content": "".join(collected)})
+            self.session_store.save(session_id, history)
     def cmd_list(self):
         """列出所有文档（按 file_hash 分组）"""
         groups ={}
@@ -133,8 +168,14 @@ class RagApp:
             print(f"❌ 没找到 hash={file_hash} 的文档")
             return
 
-        #找到并删除
-        self.index.delete_nodes(node_ids=to_delete)
+        for n in to_delete:
+            self.index.docstore.delete_document(n,raise_error=False)
+
+
+        try:
+            self.index.vector_store.delete_nodes(to_delete)
+        except Exception:
+            pass
 
 
         # ④ 持久化
@@ -159,7 +200,8 @@ def main():
     p_ask.add_argument("question", help="要问的问题")
 
     # 子命令 3: chat
-    sub.add_parser("chat", help="多轮对话模式")
+    p_chat = sub.add_parser("chat", help="多轮对话模式")
+    p_chat.add_argument("session_id", nargs="?", default=None, help="会话ID（可选）")
 
     # 子命令 4: list
     sub.add_parser("list", help="列出已入库文档")
@@ -177,7 +219,7 @@ def main():
         app.cmd_ask(args.question)
     elif args.cmd == "chat":
         app = RagApp()
-        app.cmd_chat()
+        app.cmd_chat(args.session_id)
     elif args.cmd == "list":
         app = RagApp()
         app.cmd_list()
